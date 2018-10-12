@@ -85,21 +85,25 @@ class Divante_VueStorefrontBridge_AbstractController extends Mage_Core_Controlle
      * @param $request
      * @return object
      */
-    protected function _currentCustomer($request) {
+    protected function _currentCustomer($request) { 
         $token = $request->getParam('token');
-        $secretKey = trim(Mage::getConfig()->getNode('default/auth/secret'));
 
-        try {
-            $tokenData = JWT::decode($token, $secretKey, 'HS256');
-            if($tokenData->id > 0){
-                return Mage::getModel('customer/customer')->load($tokenData->id);
-            }  else {
+        if(intval(($token)) > 0) {
+            return Mage::getModel('customer/customer')->load($token);
+        } else {
+            $secretKey = trim(Mage::getConfig()->getNode('default/auth/secret'));
+    
+            try {
+                $tokenData = JWT::decode($token, $secretKey, 'HS256');
+                if($tokenData->id > 0){
+                    return Mage::getModel('customer/customer')->load($tokenData->id);
+                }  else {
+                    return null;
+                }
+            } catch (Exception $err) {
                 return null;
             }
-        } catch (Exception $err) {
-            return null;
         }
-
         return null;
     }
 

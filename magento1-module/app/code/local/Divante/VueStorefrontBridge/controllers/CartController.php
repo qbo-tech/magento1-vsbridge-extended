@@ -1,13 +1,16 @@
 <?php
 require_once('AbstractController.php');
 require_once(__DIR__.'/../helpers/JWT.php');
+
+/**
+ * Cart Controller Logic for VSF 
+ */
 class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBridge_AbstractController
 {
-
     /**
      * Create shopping cart - https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgecartcreate
      * @throws Mage_Core_Exception
-     * @throws Mage_Core_Model_Store_ExceptionC
+     * @throws Mage_Core_Model_Store_Exception
      */
     public function createAction()
     {
@@ -24,9 +27,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
 
                     // quote assign to new customer
                     $quoteObj = Mage::getModel('sales/quote');
-                    if ($customer)
+                    if ($customer) {
                         $quoteObj->assignCustomer($customer);
-
+                    }
                     $quoteObj->setStoreId($store->getId()); // TODO: return existing user cart id if exists
                     $quoteObj->collectTotals();
                     $quoteObj->setIsActive(true);
@@ -34,7 +37,18 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                 }
 
                 $secretKey = trim(Mage::getConfig()->getNode('default/auth/secret'));
-                return $this->_result(200, $customer ? $quoteObj->getId() : JWT::encode(array('cartId' =>$quoteObj->getId()), $secretKey));
+                /** Encoding cart_id for logged-in user, and returning it plain text for guests, 
+                *   causes conflict with vsf order.schema.json while placing the order (cart_id is supossed to be a string).
+                *   Original code:
+                *   return $this->_result(200, $customer ? $quoteObj->getId() : JWT::encode(array('cartId' =>$quoteObj->getId()), $secretKey));
+                * 
+                * Remove this comment after PR is approved.
+                */
+                return $this->_result(200, 
+                    JWT::encode(
+                        array('cartId' => $quoteObj->getId()), $secretKey
+                    )
+                );
             }
         } catch (Exception $err) {
             return $this->_result(500, $err->getMessage());
@@ -73,17 +87,17 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                                 'quote_id' => $itemDto['quote_id']
                             );
                         }
+                        Mage::log($items);
                         return $this->_result(200, $items);
 
                     }
                 }
             }
         } catch (Exception $err) {
+            Mage::logException($err);
             return $this->_result(500, $err->getMessage());
         }
     }
-
-
     /**
      * Apply Discount Code
      * https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgecartapply-coupon
@@ -120,7 +134,6 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                     } catch (Exception $err) {
                         return $this->_result(500, false);
                     }
-
                 }
             }
         }
@@ -132,6 +145,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
      * 
      * @throws Mage_Core_Exception
      * @throws Mage_Core_Model_Store_ExceptionC
+     
      */
     public function deleteCouponAction()
     {
@@ -154,6 +168,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
 
                         return $this->_result(200, true);
                     } catch (Exception $err) {
+                         Mage::logException($err);
                         return $this->_result(500, false);
                     }
 
@@ -194,8 +209,6 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             }
         }
     }    
-    
-
     /**
      * Get Quote totals and Collect totals and set shipping information
      * https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgecartcollect-totals
@@ -304,7 +317,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             return $this->_result(500, $err->getMessage());
         }
     }    
-
+    /**
+     * Check if payment method is available for current Quote.
+     */
     protected function _canUsePaymentMethod($method, $quote)
     {
         if (!($method->isGateway() || $method->canUseInternal())) {
@@ -347,10 +362,10 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                 $quoteObj = $this->_currentQuote($this->getRequest());
 
                 if(!$quoteObj) {
-                    return $this->_result(500, 'No quote found for cartId = '.$this->getRequest()->getParam('cartId'));
+                    return $this->_result(500, 'No quote found for cartId = ' . $this->getRequest()->getParam('cartId'));
                 } else {
                     if(!$this->_checkQuotePerms($quoteObj, $customer)) {
-                        return $this->_result(500, 'User is not authroized to access cartId = '.$this->getRequest()->getParam('cartId'));
+                        return $this->_result(500, 'User is not authroized to access cartId = ' . $this->getRequest()->getParam('cartId'));
                     } else {
 
                         $store = $quoteObj->getStoreId();
@@ -383,7 +398,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             return $this->_result(500, $err->getMessage());
         }
     }
-    
+    /**
+     * Collect Shipping Methods
+     */
     protected function _getAllShippingMethods()
     {
         $methods = Mage::getSingleton('shipping/config')->getActiveCarriers();
@@ -475,7 +492,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             return $this->_result(500, $err->getMessage());
         }
     }    
-
+    /**
+     * Update Cart Action
+     */
     public function updateAction()
     {
         if (!$this->_checkHttpMethod('POST')) {
@@ -565,10 +584,11 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
         }
 
     }
-
+    /**
+     * Delete Cart Action
+     */
     public function deleteAction()
     {
-
         if (!$this->_checkHttpMethod('POST')) {
             return $this->_result(500, 'Only POST method allowed');
         } else {
@@ -583,7 +603,6 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                 } else {
 
                     $cartItem = $request->cartItem;
-
                     $customer = $this->_currentCustomer($this->getRequest());
                     $quoteObj = $this->_currentQuote($this->getRequest());
 
@@ -603,6 +622,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
 
                                 }
                             } catch (Exception $err) {
+                                Mage::logException($err);
                                 return $this->_result(500, $err->getMessage());
                             }
 
@@ -612,6 +632,165 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                 }
             }
         }
+    }
+    /**
+    * Set Billing Address to Quote
+    */
+    public function billingInformationAction() 
+    {
+        try {
+            if (!$this->_checkHttpMethod('POST')) {
+                return $this->_result(500, 'Only POST method allowed');
+            } else {
+                $cartId = $this->getRequest()->getParam('cartId');
+                $customer = $this->_currentCustomer($this->getRequest());
+                $quoteObj = $this->_currentQuote($this->getRequest());
+
+                if(!$quoteObj) {
+                    return $this->_result(500, sprintf('No quote found for Cart ID %s ', $cartId));
+                } else {
+                    if(!$this->_checkQuotePerms($quoteObj, $customer)) {
+                        return $this->_result(500, sprintf('User is not authroized to access Cart ID %s ', $cartId));
+                    } else {
+                        $request = $this->_getJsonBody();
+
+                        $billingAddress = $this->_getBillingAddress($request, $quoteObj);
+                        if($customer) {
+                            $billingAddress->setSaveInAddressBook(true);
+                        } else {
+                            $billingAddress->setFirstname($request->address->firstname)
+                                ->setLastname($request->address->lastname)
+                                ->setEmail($request->address->email);
+                        } 
+                        $billingAddress->save();
+
+                        $quoteObj->setBillingAddress($billingAddress);
+
+                        return $this->_result(200, 
+                            array('totals' => $quoteObj->getGrandTotal())
+                        );
+                    }
+                }
+            }
+        } catch (Exception $err) {
+            Mage::logException($err);
+            return $this->_result(500, $err->getMessage());
+        }
+    }
+    /**
+    * Set Shipping Address to Quote
+    */
+    public function shippingInformationAction() 
+    {
+         try {
+            if (!$this->_checkHttpMethod('POST')) {
+                return $this->_result(500, 'Only POST method allowed');
+            } else {
+                $cartId = $this->getRequest()->getParam('cartId');
+                $customer = $this->_currentCustomer($this->getRequest());
+                $quoteObj = $this->_currentQuote($this->getRequest());
+
+                if(!$quoteObj) {
+                    return $this->_result(500, sprintf('No quote found for Cart ID %s ', $cartId));
+                } else {
+                    if(!$this->_checkQuotePerms($quoteObj, $customer)) {
+                        return $this->_result(500, sprintf('User is not authroized to access Cart ID %s ', $cartId));
+                    } else {
+                        $request = $this->_getJsonBody();
+
+                        $shippingAddress = $this->_getShippingAddress($request, $quoteObj);
+                        $this->_prepareShippingAddress($shippingAddress, $customer, $request);
+
+                        // User may change Fist, latname and email address during VUE checkout. Overwrite thos values for the order.
+                        $quoteObj->setCustomerEmail($request->addressInformation->shippingAddress->email)
+                            ->setCustomerFirstname($request->addressInformation->shippingAddress->firstname)
+                            ->setCustomerLastname($request->addressInformation->shippingAddress->lastname)   
+                            ->setShippingAddress($shippingAddress)
+                            ->collectTotals()
+                            ->save();
+
+                        return $this->_result(200, 
+                            array('totals' => $quoteObj->getGrandTotal())
+                        );
+                    }
+                }
+            }
+        } catch (Exception $err) {
+            Mage::logException($err);
+            return $this->_result(500, $err->getMessage());
+        }
+    }
+    /**
+     * Build Shipping address Array
+     * @param Array $request
+     * @param Mage_Sales_Model_Quote $quote
+     */
+    protected function _getShippingAddress($request, $quoteObj)
+    {
+        return $quoteObj->getShippingAddress()->addData(array(
+            'customer_address_id' => '',
+            'prefix' => '',
+            'firstname' => $request->addressInformation->shippingAddress->firstname,
+            'lastname' => $request->addressInformation->shippingAddress->lastname,
+            'suffix' => '',
+            'company' => $request->addressInformation->shippingAddress->company, 
+            'street' => implode("\n", array(
+                '0' => $request->addressInformation->shippingAddress->street[0],
+                '1' => $request->addressInformation->shippingAddress->street[1]
+            )),
+            'city' => $request->addressInformation->shippingAddress->city,
+            'country_id' => $request->addressInformation->shippingAddress->countryId,
+            'region' => $request->addressInformation->shippingAddress->regionCode ? : 500,
+            'postcode' => $request->addressInformation->shippingAddress->postcode,
+            'telephone' => $request->addressInformation->shippingAddress->telephone
+        ));
+    }
+    /**
+     * Prepare and collect Shipping address rates
+     * @param Array $shippingAddress
+     */
+    protected function _prepareShippingAddress(&$shippingAddress, $customer, $request)
+    {
+        if($customer) {
+            $shippingAddress->setSaveInAddressBook(true);
+        } else {
+            $shippingAddress->setFirstname($request->addressInformation->shippingAddress->firstname)
+                ->setLastname($request->addressInformation->shippingAddress->lastname)
+                ->setEmail($request->addressInformation->shippingAddress->email);
+        }
+
+        // Collect Rates and Set Shipping Method
+        $shipingMethod = $request->addressInformation->shippingMethodCode;
+        $shippingAddress
+            ->setCollectShippingRates(true)
+            ->collectShippingRates()
+            ->setShippingMethod($shipingMethod . "_" . $shipingMethod)
+            ->save();
+    }
+
+     /**
+     * Build Billing address Array
+     * @param Array $request
+     * @param Mage_Sales_Model_Quote $quote
+     */
+    protected function _getBillingAddress($request, $quoteObj)
+    {
+        return $quoteObj->getBillingAddress()->addData(array(
+            'customer_address_id' => '',
+            'prefix' => '',
+            'firstname' => $request->address->firstname,
+            'lastname' => $request->address->lastname,
+            'suffix' => '',
+            'street' => implode("\n", array(
+                '0' => $request->address->street[0],
+                '1' => $request->address->street[1]
+            )),
+            'city' => $request->address->city,
+            'country_id' => $request->address->countryId,
+            'region' => $request->address->regionCode ? : 500,
+            'postcode' => $request->address->postcode,
+            'telephone' => $request->address->telephone
+        )); 
     }
 }
 ?>

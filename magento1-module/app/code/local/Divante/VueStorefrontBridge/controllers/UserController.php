@@ -158,7 +158,8 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 
                 $collection = Mage::getModel("sales/order")->getCollection()
                             ->addAttributeToSelect('*')
-                            /*->addFieldToFilter('customer_id', $customer->getId())*/->setPageSize($pageSize)->setCurPage($page);
+                            ->addFieldToFilter('customer_id', $customer->getId())
+                            ->setPageSize($pageSize)->setCurPage($page);
                 
                 $ordersDTO = array();
                 foreach ($collection as $order) {

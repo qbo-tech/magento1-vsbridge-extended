@@ -18,7 +18,7 @@ class Divante_VueStorefrontBridge_StockController extends Divante_VueStorefrontB
             } else {
 
                 try {
-                    $product_id = Mage::getModel('catalog/product')->getIdBySku($$ku);
+                    $product_id = Mage::getModel('catalog/product')->getIdBySku($sku);
                     $product = Mage::getModel('catalog/product')->load($product_id);
                     $stock = $product->getStockItem();
                     $stockDTO = $stock->getData();
