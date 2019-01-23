@@ -9,10 +9,10 @@
     </default>
     <modules>
         <Divante_VueStorefrontBridge>
-            <version>1.0.3</version>
+            <version>1.0.5</version>
         </Divante_VueStorefrontBridge>
     </modules>
-  <frontend>
+    <frontend>
         <routers>
             <vsbridge>
                 <use>standard</use>
@@ -24,5 +24,21 @@
         </routers>
     </frontend>    
     <global>
+        <helpers>
+            <vuestorefrontbridge>
+                <class>Divante_VueStorefrontBridge_Helper</class>
+            </vuestorefrontbridge>
+        </helpers>
     </global>
+    <frontend>
+      <translate>
+          <modules>
+             <Divante_VueStorefrontBridge>
+                 <files>
+                     <default>Divante_VueStorefrontBridge.csv</default>
+                 </files>
+             </Divante_VueStorefrontBridge>
+         </modules>
+      </translate>
+   </frontend>
 </config>

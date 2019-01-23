@@ -1,5 +1,6 @@
 <?php
 require_once('AbstractController.php');
+
 function _prepareDTO($category) {
     $categoryDTO = $category->getData();
     $categoryDTO['id'] = intval($categoryDTO['entity_id']);
@@ -32,11 +33,11 @@ class Divante_VueStorefrontBridge_CategoriesController extends Divante_VueStoref
         if ($this->_authorizeAdminUser($this->getRequest())) {
 
             $params = $this->_processParams($this->getRequest());
-            $categories = Mage::getModel('catalog/category')->getCollection()->addAttributeToSelect('*')->setPage($params['page'], $params['pageSize'])->load(); //$helper->getStoreCategories();
+            $categories = Mage::getModel('catalog/category')->getCollection()->addAttributeToSelect('*')->setPage($params['page'], $params['pageSize'])->load();
 
             $catList = array();
             foreach ($categories as $category) {
-                $catList[] = _processCategory($category);
+	        $catList[] = _processCategory($category);
             }
             $this->_result(200, $catList);
         }

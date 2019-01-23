@@ -79,7 +79,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                             $itemDto = $item->getData();
                             $items[] = array(
                                 'item_id' => $itemDto['item_id'],
-                                'sku' => $itemDto['sku'],
+                                'sku' => (string)$itemDto['sku'],
                                 'name' => $itemDto['name'],
                                 'price' => $itemDto['price'],
                                 'qty' => $itemDto['qty'],
@@ -87,9 +87,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                                 'quote_id' => $itemDto['quote_id']
                             );
                         }
-                        Mage::log($items);
-                        return $this->_result(200, $items);
-
+                        return $this->_result(200, $items, null, false);
                     }
                 }
             }
@@ -129,6 +127,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                     try {
                         $request = $this->_getJsonBody();
                         $quoteObj->setCouponCode($couponCode)->collectTotals()->save();
+                        if(!$quoteObj->getCouponCode()) {
+                            return $this->_result(500, false);
+                        }
 
                         return $this->_result(200, true);
                     } catch (Exception $err) {
@@ -144,8 +145,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
      * https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgecartdelete-coupon
      * 
      * @throws Mage_Core_Exception
-     * @throws Mage_Core_Model_Store_ExceptionC
-     
+     * @throws Mage_Core_Model_Store_Exception
      */
     public function deleteCouponAction()
     {
@@ -233,51 +233,52 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                         $request = $this->_getJsonBody();
 
                         if ($request) {
+                            //$paymentMethodCode = "paypal_plus";
                             $paymentMethodCode = $request->methods->paymentMethod->method;
-                            $shippingMethodCode = $request->methods->shippingMethodCode;
-                            $shippingMethodCarrier = $request->methods->shippingMethodCarrier;
-
-
+                            $shippingMethodCode = $request->addressInformation->shippingMethodCode;
+                            $shippingMethodCarrier = $request->addressInformation->shippingCarrierCode;                           
                             $address = null;
+
                             if ($quoteObj->isVirtual()) {
                                 $address = $quoteObj->getBillingAddress();
                             } else {
                                 $address = $quoteObj->getShippingAddress();
-
-                                $shippingAddress = $quoteObj->getShippingAddress();
-
-                                if($request->addressInformation) {
-
-                                    $shippingMethodCarrier = $request->addressInformation->shipping_carrier_code;
-                                    $shippingMethodCode = $request->addressInformation->shipping_method_code;
-                                            
-                                    $countryId = $request->addressInformation->shipping_address->country_id;
-                                    if($countryId) {
-                                        $shippingAddress->setCountryId($countryId)->setCollectShippingrates(true)->save();
-                                    }
-                                }
-                                
-                                $shippingAddress->setCollectShippingRates(true)
-                                    ->collectShippingRates()
-                                    ->setShippingMethod($shippingMethodCode);                            
-                            }                        
-
-                            if ($address) {
-                                if($paymentMethodCode)
-                                    $address->setPaymentMethod($paymentMethodCode);
                             }
+
+                            if($request->addressInformation) {
+                                $countryId = $request->addressInformation->shippingAddress->countryId;
+                                if($countryId) {
+                                    $address->setCountryId($countryId)->save();
+                                }
+                            }
+                           
+                            $address->setCollectShippingRates(true)
+                                ->setShippingMethod($shippingMethodCode . "_" . $shippingMethodCode)
+                                ->collectShippingRates()
+                                ->save();                            
+                                                 
+                           
+                            if($paymentMethodCode) {
+                                $address->setPaymentMethod($paymentMethodCode)->save();
+                            }
+                            
                         } else {
                             $shippingAddress = $quoteObj->getShippingAddress()->setCollectShippingRates(true)
-                            ->collectShippingRates();
+                                ->collectShippingRates();
                         }
                         
-                        $quoteData = $quoteObj->collectTotals()->save()->getData();
+                        $quoteObj->collectTotals()->save();
+                        $quoteData = $quoteObj->getData();
+                        
+                        $totals = $quoteObj->getTotals();
+                    
                         $totalsDTO = array(
                             'grand_total' => $quoteData['grand_total'],
                             'base_grand_total' => $quoteData['base_grand_total'],
                             'base_subtotal' => $quoteData['base_subtotal'],
                             'subtotal' => $quoteData['subtotal'],
-                            'discount_amount' => $quoteData['discount_amount'],
+                            'discount_amount' => isset($totals["discount"]) ? $totals["discount"]->getValue() : $quoteData['discount_amount'],
+                            'coupon_code' => $quoteObj->getCouponCode(),
                             'base_discount_amount' => $quoteData['base_discount_amount'],
                             'subtotal_with_discount' => $quoteData['subtotal_with_discount'],
                             'shipping_amount' => $quoteData['shipping_amount'],
@@ -292,7 +293,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                             'subtotal_incl_tax' => $quoteData['subtotal_incl_tax'],
                             'base_subtotal_incl_tax' => $quoteData['base_subtotal_incl_tax'],
                             'shipping_incl_tax' => $quoteData['shipping_incl_tax'],
-                            'base_shipping_incl_tax' => $quoteData['base_shipping_incl_tax'],                        
+                            'base_shipping_incl_tax' => $quoteData['base_shipping_incl_tax'],                       
                             'base_currency_code' => $quoteData['base_currency_code'],
                             'quote_currency_code' => $quoteData['quote_currency_code'],
                             'items_qty' => $quoteData['items_qty'],
@@ -304,12 +305,20 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                             $itemDto = $item->getData();
                             $totalsDTO['items'][] = $itemDto;
                         }
+
                         $totalsCollection = $quoteObj->getTotals();
                         foreach($totalsCollection as $code => $total) {
                             $totalsDTO['total_segments'][] = $total->getData();
                         }
+                        if ($quoteObj->isVirtual() || !$quoteData['shipping_amount'] )  {
+                             $totalsDTO['total_segments'][] = array(
+                                 'code' => 'shipping',
+                                 'title' => Mage::helper("sales")->__("Shipping"),
+                                 'value' => 0,
+                                 'address' => []
+                             );
+                        }
                         return $this->_result(200, $totalsDTO);
-
                     }
                 }
             }
@@ -321,7 +330,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
      * Check if payment method is available for current Quote.
      */
     protected function _canUsePaymentMethod($method, $quote)
-    {
+    {   
         if (!($method->isGateway() || $method->canUseInternal())) {
             return false;
         }
@@ -333,7 +342,6 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
         if (!$method->canUseForCurrency(Mage::app()->getStore($quote->getStoreId())->getBaseCurrencyCode())) {
             return false;
         }
-
         /**
          * Checking for min/max order total for assigned payment method
          */
@@ -464,19 +472,23 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                         try {
                             $groupedRates = $quoteShippingAddress->setCollectShippingRates(true)->collectShippingRates()->getGroupedAllShippingRates();
                             $ratesResult = array();
+                           
                             foreach ($groupedRates as $carrierCode => $rates ) {
                                 $carrierName = $carrierCode;
                                 if (!is_null(Mage::getStoreConfig('carriers/'.$carrierCode.'/title'))) {
                                     $carrierName = Mage::getStoreConfig('carriers/'.$carrierCode.'/title');
                                 }
-                
                                 foreach ($rates as $rate) {
                                     $rateItem = $rate->getData();
-                                    $rateItem['carrier_title'] = $carrierName;
+                                    $rateItem['method_title'] = $carrierName;
                                     $rateItem['carrier_code'] = $carrierCode;
                                     $rateItem['method_code'] = $rateItem['method'];
                                     $rateItem['amount'] = $rateItem['price'];
-                                    
+                                   
+                                    if($quoteObj->isVirtual()){
+                                        $rateItem['price'] = 0;
+                                        $rateItem['amount'] = 0;
+                                    }
                                     $ratesResult[] = $rateItem;
                                     unset($rateItem);
                                 }
@@ -506,7 +518,7 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             if (!$request) {
                 return $this->_result(500, 'No JSON object found in the request body');
             } else {
-                if ((!$request->cartItem)) {
+                if ((!property_exists($request, "cartItem") || !$request->cartItem)) {
                     return $this->_result(500, 'No cartItem data provided!');
                 } else {
 
@@ -553,10 +565,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                                                 break;
                                             }
                                         }
-
-                                        if(!$alreadyInCart)
+                                        if(!$alreadyInCart) {
                                             $item = $quoteObj->addProduct($product, max(1, $cartItem->qty));
-                                        
+                                        }   
                                         $quoteObj->collectTotals()->save();
 
                                         $itemDto = $item->getData();
@@ -572,9 +583,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                                     }
                                 }
                            } catch (Exception $err) {
-                                return $this->_result(500, $err->getMessage());
-                            }
-
+                               Mage::logException($err);
+                               return $this->_result(500, $this->__("The requested quantity for this product is not available."));
+                           }
                         }
                     }
 
@@ -630,8 +641,8 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
                     }
 
                 }
-            }
-        }
+    }
+}
     }
     /**
     * Set Billing Address to Quote
@@ -688,29 +699,32 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             } else {
                 $cartId = $this->getRequest()->getParam('cartId');
                 $customer = $this->_currentCustomer($this->getRequest());
-                $quoteObj = $this->_currentQuote($this->getRequest());
+                $quote = $this->_currentQuote($this->getRequest());
 
-                if(!$quoteObj) {
+                if(!$quote) {
                     return $this->_result(500, sprintf('No quote found for Cart ID %s ', $cartId));
                 } else {
-                    if(!$this->_checkQuotePerms($quoteObj, $customer)) {
+                    if(!$this->_checkQuotePerms($quote, $customer)) {
                         return $this->_result(500, sprintf('User is not authroized to access Cart ID %s ', $cartId));
                     } else {
                         $request = $this->_getJsonBody();
-
-                        $shippingAddress = $this->_getShippingAddress($request, $quoteObj);
-                        $this->_prepareShippingAddress($shippingAddress, $customer, $request);
+			
+                        $address = $this->_getShippingAddress($request, $quote);
+                        if($customer) {
+                            $quote->setCustomer($customer);
+                        }
+                        $this->_prepareShippingAddress($address, $customer, $request);
 
                         // User may change Fist, latname and email address during VUE checkout. Overwrite thos values for the order.
-                        $quoteObj->setCustomerEmail($request->addressInformation->shippingAddress->email)
+                        $quote->setCustomerEmail($request->addressInformation->shippingAddress->email)
                             ->setCustomerFirstname($request->addressInformation->shippingAddress->firstname)
                             ->setCustomerLastname($request->addressInformation->shippingAddress->lastname)   
-                            ->setShippingAddress($shippingAddress)
+                            ->setShippingAddress($address)
                             ->collectTotals()
                             ->save();
 
                         return $this->_result(200, 
-                            array('totals' => $quoteObj->getGrandTotal())
+                            array('totals' => $quote->getGrandTotal())
                         );
                     }
                 }
@@ -725,9 +739,9 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
      * @param Array $request
      * @param Mage_Sales_Model_Quote $quote
      */
-    protected function _getShippingAddress($request, $quoteObj)
+    protected function _getShippingAddress($request, $quote)
     {
-        return $quoteObj->getShippingAddress()->addData(array(
+        return $quote->getShippingAddress()->addData(array(
             'customer_address_id' => '',
             'prefix' => '',
             'firstname' => $request->addressInformation->shippingAddress->firstname,
@@ -740,10 +754,11 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             )),
             'city' => $request->addressInformation->shippingAddress->city,
             'country_id' => $request->addressInformation->shippingAddress->countryId,
-            'region' => $request->addressInformation->shippingAddress->regionCode ? : 500,
+            'region_id' => property_exists($request->addressInformation->shippingAddress, "regionCode") ? $request->addressInformation->shippingAddress->regionCode : 491,
             'postcode' => $request->addressInformation->shippingAddress->postcode,
             'telephone' => $request->addressInformation->shippingAddress->telephone
-        ));
+        ))->save();
+
     }
     /**
      * Prepare and collect Shipping address rates
@@ -761,11 +776,16 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
 
         // Collect Rates and Set Shipping Method
         $shipingMethod = $request->addressInformation->shippingMethodCode;
+        
         $shippingAddress
+            ->setShippingMethod($request->addressInformation->shippingCarrierCode . "_" . $request->addressInformation->shippingMethodCode)
             ->setCollectShippingRates(true)
             ->collectShippingRates()
-            ->setShippingMethod($shipingMethod . "_" . $shipingMethod)
+            //->setShippingMethod($request->addressInformation->shippingMethodCode . "_" . $request->addressInformation->shippingCarrierCode)
+            //->setShippingMethod($request->addressInformation->shippingMethodCode . "_" . $request->addressInformation->shippingMethodCode)
             ->save();
+
+        return $shippingAddress;
     }
 
      /**
@@ -787,10 +807,46 @@ class Divante_VueStorefrontBridge_CartController extends Divante_VueStorefrontBr
             )),
             'city' => $request->address->city,
             'country_id' => $request->address->countryId,
-            'region' => $request->address->regionCode ? : 500,
+            'region_id' => property_exists($request->address, "regionCode") ? $request->address->regionCode : 491,
             'postcode' => $request->address->postcode,
             'telephone' => $request->address->telephone
         )); 
+    }
+     /**
+     * Get regions list by country code
+     */
+    public function regionsAction()
+    {
+        try {
+            if (!$this->_checkHttpMethod('GET')) {
+                return $this->_result(500, 'Only GET method allowed');
+            } else {
+                $quoteObj = $this->_currentQuote($this->getRequest());
+                
+                if(!$quoteObj) {
+                    return $this->_result(500, 'No quote found for cartId = '.$this->getRequest()->getParam('cartId'));
+                } else {
+                    $countryId = $this->getRequest()->getParam('countryCode');
+                    if (!$countryId) {
+                        return $this->_result(400, 'Please specify a Country Code');
+                    }
+                    $regionCollection  = Mage::getModel('directory/region')->getResourceCollection()
+                        ->addCountryFilter($countryId)
+                        ->setOrder('region_id', Varien_Data_Collection::SORT_ORDER_ASC)
+                        ->load();
+
+                     $items = array();
+                     foreach($regionCollection as $region) {
+                         Mage::log($region->getData());
+                         $items[$region->getId()] = $region->getName();
+                     }
+                     return $this->_result(200, $items, null, false);
+                }
+            }
+        } catch (Exception $err) {
+            Mage::logException($err);
+            return $this->_result(500, $err->getMessage());
+        }
     }
 }
 ?>

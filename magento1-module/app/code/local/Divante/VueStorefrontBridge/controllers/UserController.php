@@ -10,6 +10,8 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
      */
     public function loginAction()
     {
+        $errMsg = $this->__("Invalid login or password.");
+
         if (!$this->_checkHttpMethod('POST')) {
             return $this->_result(500, 'Only POST method allowed');
         } else {
@@ -20,7 +22,7 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     return $this->_result(500, 'No JSON object found in the request body');
                 } else {
                     if (!$request->username || !$request->password) {
-                        return $this->_result(500, 'No username or password given!');
+                        return $this->_result(500, $errMsg);
                     } else {
                         $session = Mage::getSingleton( 'customer/session' );
                         $secretKey = trim(Mage::getConfig()->getNode('default/auth/secret'));
@@ -31,19 +33,18 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                                 $refreshToken = JWT::encode($request, $secretKey, 'HS256');
                                 return $this->_result(200, JWT::encode(array('id' => $user->getId()), $secretKey), array('refreshToken' => $refreshToken));
                             } else {
-                                return $this->_result(500, 'You did not sign in correctly or your account is temporarily disabled.');
+                                return $this->_result(500, $errMsg);
                             }
                         } else {
-                            return $this->_result(500, 'You did not sign in correctly or your account is temporarily disabled.');
+                            return $this->_result(500, $errMsg);
                         }
 
 
                     }
                 }
             } catch (Exception $err) {
-                return $this->_result(500, $err->getMessage());
+                return $this->_result(500, $errMsg);
             }
-
         }
     }
 
@@ -62,18 +63,19 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 try {
                     $customer = Mage::getModel('customer/customer')
                     ->setWebsiteId(Mage::app()->getStore()->getWebsiteId())
-                    ->loadByEmail($$request->email);
-                    if ($customer)
-                        $customer->sendPasswordResetConfirmationEmail();                
-                    else {
+                    ->loadByEmail($request->email);
+	            if ($customer){
+                        $customer->sendPasswordResetConfirmationEmail();
+                        return $this->_result(200, "Reset password email sent.");         
+                    } else {
                         return $this->_result(500, 'Wrong e-mail provided');
                     }
                 } catch (Exception $err) {
                     return $this->_result(500, $err->getMessage());
                 }
             }
-
         }
+        return $this->_result(200, []);
     }
 
     /**
@@ -103,6 +105,7 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 }
             }
         }
+        return $this->_result(200, []);
     }
 
 
@@ -172,9 +175,22 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                         $itemDTO['id'] = $itemDTO['item_id'];
                         $orderDTO['items'][] = $itemDTO;
                     }
+                    $methods = Mage::getSingleton('shipping/config')->getActiveCarriers();
+                    $_title = $this->__("No shipping information available.");
 
+                    foreach($methods as $_code => $_method) {
+                        if(strpos($order->getShippingMethod(), $_code) !== false ) {
+                             $_title = Mage::getStoreConfig("carriers/$_code/title");
+                         }
+                    }
+                    $orderDTO['shipping_description'] = $_title;
+                    $orderDTO['status'] = $order->getStatusLabel();
+                    $orderDTO['payment']['additional_information'][] = $order->getPayment()->getMethodInstance()->getTitle();
+                    $orderDTO['extension_attributes']['shipping_assignments'][]['shipping']['address'] = $order->getShippingAddress()->toArray();
+                    $orderDTO['billing_address'] = $order->getBillingAddress()->toArray();
                     $ordersDTO[] = $orderDTO;
                 }
+                //Mage::log($ordersDTO);
                 return $this->_result(200, array('items' => $ordersDTO));
             } else {
                 return $this->_result(500, 'User is not authroized to access self');                
@@ -207,7 +223,7 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     $store = Mage::app()->getStore();
 
                     $customer = Mage::getModel("customer/customer");
-                    $customer   ->setWebsiteId($websiteId)
+                    $customer->setWebsiteId($websiteId)
                         ->setStore($store)
                         ->setFirstname($request->customer->firstname)
                         ->setLastname($request->customer->lastname)
@@ -220,9 +236,8 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                         return $this->_result(200, $filteredCustomerData); // TODO: add support for 'Refresh-token'
                     }
                     catch (Exception $e) {
-                        return $this->_result(500, $e->getMessage());
+                        return $this->_result(500, Mage::helper('customer')->__($e->getMessage()));
                     }
-
                 }
             }
 
@@ -285,8 +300,11 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     }
                 }
                 $customer->load($customer->getId());
-                
+
                 $customerDTO = $customer->getData();
+                $customerDTO['id'] = (int)$customer->getId();
+                $customerDTO['website_id'] = (int)$customer->getWebsiteId();
+               
                 $allAddress = $customer->getAddresses();
                 $defaultBilling  = $customer->getDefaultBilling();
                 $defaultShipping = $customer->getDefaultShipping();
@@ -295,7 +313,7 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 foreach ($allAddress as $address) {
                     $addressDTO = $address->getData();
                     
-                    $addressDTO['id'] = $addressDTO['entity_id'];
+                    $addressDTO['id'] = (int)$addressDTO['entity_id'];
                     $addressDTO['region'] = array('region' => $addressDTO['region']);
                     $streetDTO = explode("\n", $addressDTO['street']);
                     if(count($streetDTO) < 2)
@@ -315,6 +333,8 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     if(!$addressDTO['telephone'])
                         $addressDTO['telephone'] = '';                                
                     //die(print_r($addressDTO, true));
+                    $addressDTO['postcode'] = (string)$addressDTO['postcode'];
+                    $addressDTO['telephone'] = (string)$addressDTO['telephone'];
 
                     if($defaultBilling == $address->getId() || $address->getId() == $updatedBillingId) {
                         // TODO: Street + Region fields (region_code should be)
@@ -329,11 +349,11 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                         $customerDTO['default_shipping'] = $address->getId();
                         $customerDTO['addresses'][] = $addressDTO;
                     }
-                    $customerDTO['id'] = $customerDTO['entity_id'];
+                    $customerDTO['id'] = (int)$customerDTO['entity_id'];
                 }
                 
                 $filteredCustomerData = $this->_filterDTO($customerDTO, array('password', 'password_hash', 'password_confirmation', 'confirmation', 'entity_type_id'));
-                return $this->_result(200, $filteredCustomerData);
+                return $this->_result(200, $filteredCustomerData, null, false);
             } catch (Exception $err) {
                 return $this->_result(500, $err->getMessage());
             }

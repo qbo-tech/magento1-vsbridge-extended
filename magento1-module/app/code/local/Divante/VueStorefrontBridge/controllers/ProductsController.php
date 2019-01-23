@@ -15,9 +15,14 @@ class Divante_VueStorefrontBridge_ProductsController extends Divante_VueStorefro
                 ->getCollection()
                 ->addAttributeToSort('updated_at', 'DESC')
                 ->addAttributeToSelect('*')
+                ->addFinalPrice()
+                ->addFieldToFilter('visibility', Mage_Catalog_Model_Product_Visibility::VISIBILITY_BOTH)
+                ->addAttributeToFilter('status', array('eq' => Mage_Catalog_Model_Product_Status::STATUS_ENABLED))
                 ->setPage($params['page'], $params['pageSize']);
+            
+            //Mage::getSingleton('catalog/product_visibility')->addVisibleInCatalogFilterToCollection($productCollection); 
 
-            if ($params['type_id']) {
+            if (isset($params['type_id'])) {
                 $productCollection->addFieldToFilter('type_id', $params['type_id']);
             }
 
@@ -26,6 +31,7 @@ class Divante_VueStorefrontBridge_ProductsController extends Divante_VueStorefro
             foreach ($productCollection as $product) {
                 $productDTO = $product->getData();
                 $productDTO['id'] = intval($productDTO['entity_id']);
+                $productDTO['is_visible_on_front'] = (bool)true;
                 unset($productDTO['entity_id']);
 
                 if ($productDTO['type_id'] !== 'simple') {
@@ -55,16 +61,25 @@ class Divante_VueStorefrontBridge_ProductsController extends Divante_VueStorefro
                         $productDTO['configurable_children'][] = $childDTO;
                     }
                 }
-
+                $product->load('media_gallery');
+                $productDTO['final_price'] = $product->getFinalPrice();
+                $productDTO['description'] = $product->getShortDescription();
+                $productDTO['image'] = $product->getImage();
+                $productDTO['media_gallery'][]["image"] = $product->getImage();
+                $productDTO['media_gallery'][]["small_image"] = $product->getSmallImage() ? : $product->getImage();
+                $productDTO['media_gallery'][]["thumbnail"] = $product->getThumbnail() ? : $product->getImage();
+               
+                $productDTO["configurable_children"][]["sku"] = $product->getSku();
                 $cats = $product->getCategoryIds();
                 $productDTO['category'] = array();
+
                 foreach ($cats as $category_id) {
                     $cat = Mage::getModel('catalog/category')->load($category_id);
                     $productDTO['category'][] = array(
                         "category_id" => $cat->getId(),
                         "name" => $cat->getName());
+                    $productDTO['category_ids'][] = $category_id;
                 }
-
                 $productDTO = $this->_filterDTO($productDTO);
                 $result[] = $productDTO;
             }
