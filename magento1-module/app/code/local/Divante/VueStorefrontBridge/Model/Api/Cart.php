@@ -47,7 +47,7 @@ class Divante_VueStorefrontBridge_Model_Api_Cart
         if ($cartItem instanceof Mage_Sales_Model_Quote_Item) {
             $item = [
                 'item_id' => (int)$cartItem->getId(),
-                'sku' => $cartItem->getSku(),
+                'sku' => (string)$cartItem->getSku(),
                 'name' => $cartItem->getName(),
                 'price' => (float)$cartItem->getPrice(),
                 'qty' => $cartItem->getQty(),

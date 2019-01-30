@@ -10,40 +10,37 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
      */
     public function loginAction()
     {
+        $errMsg = Mage::helper('customer')->__("Invalid login or password.");
+
         if (!$this->_checkHttpMethod('POST')) {
             return $this->_result(500, 'Only POST method allowed');
         } else {
             try {
                 $request = $this->_getJsonBody();
-
                 if (!$request) {
                     return $this->_result(500, 'No JSON object found in the request body');
                 } else {
                     if (!$request->username || !$request->password) {
-                        return $this->_result(500, 'No username or password given!');
+                        return $this->_result(500, $errMsg);
                     } else {
                         $session = Mage::getSingleton( 'customer/session' );
                         $secretKey = trim(Mage::getConfig()->getNode('default/auth/secret'));
-
                         if($session->login($request->username, $request->password)) {
                             $user = $session->getCustomer();
                             if ($user->getId()) {
                                 $refreshToken = JWT::encode($request, $secretKey, 'HS256');
                                 return $this->_result(200, JWT::encode(array('id' => $user->getId()), $secretKey), array('refreshToken' => $refreshToken));
                             } else {
-                                return $this->_result(500, 'You did not sign in correctly or your account is temporarily disabled.');
+                                return $this->_result(500, $errMsg);
                             }
                         } else {
-                            return $this->_result(500, 'You did not sign in correctly or your account is temporarily disabled.');
+                            return $this->_result(500, $errMsg);
                         }
-
-
                     }
                 }
             } catch (Exception $err) {
-                return $this->_result(500, $err->getMessage());
+                return $this->_result(500, $errMsg);
             }
-
         }
     }
 
@@ -51,7 +48,8 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
      * Send password reset link
      * https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgeuserresetpassword
      */
-    public function resetPasswordAction() {
+    public function resetPasswordAction() 
+    {
         if (!$this->_checkHttpMethod('POST')) {
             return $this->_result(500, 'Only POST method allowed');
         } else {
@@ -62,25 +60,27 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 try {
                     $customer = Mage::getModel('customer/customer')
                     ->setWebsiteId(Mage::app()->getStore()->getWebsiteId())
-                    ->loadByEmail($$request->email);
-                    if ($customer)
-                        $customer->sendPasswordResetConfirmationEmail();                
-                    else {
+                    ->loadByEmail($request->email);
+	            if ($customer){
+                        $customer->sendPasswordResetConfirmationEmail();
+                        return $this->_result(200, "Reset password email sent.");         
+                    } else {
                         return $this->_result(500, 'Wrong e-mail provided');
                     }
                 } catch (Exception $err) {
                     return $this->_result(500, $err->getMessage());
                 }
             }
-
         }
+        return $this->_result(200, []);
     }
 
     /**
      * Change user password
      * https://github.com/DivanteLtd/magento1-vsbridge/blob/master/doc/VueStorefrontBridge%20API%20specs.md#post-vsbridgeuserchangepassword
      */
-    public function changePasswordAction() {
+    public function changePasswordAction() 
+    {
         if (!$this->_checkHttpMethod('POST')) {
             return $this->_result(500, 'Only POST method allowed');
         } else {
@@ -103,14 +103,13 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 }
             }
         }
+        return $this->_result(200, []);
     }
-
-
-
     /**
      * Refresh the user token
      */
-    public function refreshAction() {
+    public function refreshAction() 
+    {
         try {
             if (!$this->_checkHttpMethod('POST')) {
                 return $this->_result(500, 'Only POST method allowed');
@@ -198,9 +197,22 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     $orderDTO['items'][] = $itemDTO;
                 }
 
+                $methods = Mage::getSingleton('shipping/config')->getActiveCarriers();
+                $_title = $this->__("No shipping information available.");
+
+                foreach($methods as $_code => $_method) {
+                    if(strpos($order->getShippingMethod(), $_code) !== false ) {
+                         $_title = Mage::getStoreConfig("carriers/$_code/title");
+                     }
+                }
                 $payment = $order->getPayment();
+                $orderDTO['shipping_description'] = $_title;
+                $orderDTO['status'] = $order->getStatusLabel();
                 $orderDTO['payment'] = $payment->toArray();
+                $orderDTO['payment']['additional_information'][] = $order->getPayment()->getMethodInstance()->getTitle();
                 $orderDTO['payment']['method_title'] = $payment->getMethodInstance()->getTitle();
+                $orderDTO['extension_attributes']['shipping_assignments'][]['shipping']['address'] = $order->getShippingAddress()->toArray();
+                $orderDTO['billing_address'] = $order->getBillingAddress()->toArray();
                 $ordersDTO[] = $orderDTO;
             }
 
@@ -247,17 +259,17 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                         return $this->_result(200, $filteredCustomerData); // TODO: add support for 'Refresh-token'
                     }
                     catch (Exception $e) {
-                        return $this->_result(500, $e->getMessage());
+                        return $this->_result(500, Mage::helper('customer')->__($e->getMessage()));
                     }
-
                 }
             }
-
         }
     }
-
-
-    public function meAction(){
+    /**
+     * Me Action
+     */
+    public function meAction()
+    {
         $customer = $this->_currentCustomer($this->getRequest());
         if(!$customer) {
             return $this->_result(500, 'User is not authroized to access self');
@@ -272,50 +284,49 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     //die(print_r($customer->getData(), true));
                     $updatedCustomer = $request['customer'];
                     $updatedCustomer['entity_id'] = $customer->getId();
-                    
+
                     $customer->setData('firstname', $updatedCustomer['firstname'])
                             ->setData('lastname', $updatedCustomer['lastname'])
                             ->setData('email', $updatedCustomer['email'])
-                            ->save();    
+                            ->save();
 
                     $updatedShippingId = 0;
-                    $updatedBillingId = 0; 
+                    $updatedBillingId = 0;
+                        $customerDTO = $customer->getData();
+                        $customerDTO['default_shipping'] = $customer->getDefaultShipping();
+
                     if ($updatedCustomer['addresses']) {
                         foreach($updatedCustomer['addresses'] as $updatedAdress) {
-                            $updatedAdress['region'] = $updatedAdress['region']['region'];
 
-                            if($updatedAdress['default_billing']) {
-                                $bAddressId = $customer->getDefaultBilling();
-                                $bAddress = Mage::getModel('customer/address');
-                                
-                                if($bAddressId) 
-                                    $bAddress->load($bAddressId);
+                            $updatedAdress["region"]    = $updatedAdress["region"]["region"];
+                            $updatedAdress["region_id"] = (int)$updatedAdress["region"]["region"];
 
-                                $updatedAdress['parent_id'] = $customer->getId();
+                            if($sAddressId = $customer->getDefaultShipping()) {
+                                $sAddress = Mage::getModel('customer/address')
+                                    ->load($sAddressId);
 
-
-                                $bAddress->setData($updatedAdress)->setIsDefaultBilling(1)->save();
-                                $updatedBillingId = $bAddress->getId();
-                            }
-                            if($updatedAdress['default_shipping']) {
-                                $sAddressId = $customer->getDefaultShipping();
-                                $sAddress = Mage::getModel('customer/address');
-                                
-                                if($sAddressId) 
-                                    $sAddress->load($sAddressId);
-
-                                $updatedAdress['parent_id'] = $customer->getId();           
+                                $updatedAdress['parent_id'] = (string)$customer->getId();
                                 $sAddress->setData($updatedAdress)->setIsDefaultShipping(1)->save();
                                 $updatedShippingId = $sAddress->getId();
-                            }                        
+
+                                $addressDTO = $sAddress->getData();
+                                $addressDTO["region"] = array('region' => $sAddress->getRegionId());
+                                $addressDTO["street"] = $sAddress->getStreet();
+                           }
                         }
+                        $customerDTO['addresses'][] = $addressDTO;
+                        $customerDTO['id'] = (int)$customer->getId();
+                        $customerDTO['website_id'] = (int)$customer->getWebsiteId();
+                        $filteredCustomerData = $this->_filterDTO($customerDTO, array('password', 'password_hash', 'password_confirmation', 'confirmation', 'entity_type_id'));
+                        return $this->_result(200, $filteredCustomerData, null, false);
+
                     }
                 }
                 $customer->load($customer->getId());
                 $customerDTO = $customer->getData();
-                $subscription = Mage::getModel('newsletter/subscriber')->loadByCustomer($customer);
-                $customerDTO['is_subscribed'] = $subscription->isSubscribed();
-
+                $customerDTO['id'] = (int)$customer->getId();
+                $customerDTO['website_id'] = (int)$customer->getWebsiteId();
+               
                 $allAddress = $customer->getAddresses();
                 $defaultBilling  = $customer->getDefaultBilling();
                 $defaultShipping = $customer->getDefaultShipping();
@@ -324,12 +335,11 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                 foreach ($allAddress as $address) {
                     $addressDTO = $address->getData();
                     
-                    $addressDTO['id'] = $addressDTO['entity_id'];
+                    $addressDTO['id'] = (int)$addressDTO['entity_id'];
                     $addressDTO['region'] = array('region' => $addressDTO['region']);
                     $streetDTO = explode("\n", $addressDTO['street']);
                     if(count($streetDTO) < 2)
                         $streetDTO[]='';
-
                     $addressDTO['street'] = $streetDTO;
                     if(!$addressDTO['firstname'])
                         $addressDTO['firstname'] = $customerDTO['firstname'];
@@ -344,25 +354,25 @@ class Divante_VueStorefrontBridge_UserController extends Divante_VueStorefrontBr
                     if(!$addressDTO['telephone'])
                         $addressDTO['telephone'] = '';                                
                     //die(print_r($addressDTO, true));
-
-                    if($defaultBilling == $address->getId() || $address->getId() == $updatedBillingId) {
+                    $addressDTO['postcode'] = (string)$addressDTO['postcode'];
+                    $addressDTO['telephone'] = (string)$addressDTO['telephone'];
+                    if($defaultBilling == $address->getId()) {
                         // TODO: Street + Region fields (region_code should be)
-
                         // its customer default billing address
                         $addressDTO['default_billing'] = true;
                         $customerDTO['default_billing'] = $address->getId();
                         $customerDTO['addresses'][] = $addressDTO;
-                    } else if($defaultShipping == $address->getId()|| $address->getId() == $updatedShippingId) {
+                    } else if($defaultShipping == $address->getId()) {
                         // its customer default shipping address
                         $addressDTO['default_shipping'] = true;
                         $customerDTO['default_shipping'] = $address->getId();
                         $customerDTO['addresses'][] = $addressDTO;
                     }
-                    $customerDTO['id'] = $customerDTO['entity_id'];
+                    $customerDTO['id'] = (int)$customerDTO['entity_id'];
                 }
                 
                 $filteredCustomerData = $this->_filterDTO($customerDTO, array('password', 'password_hash', 'password_confirmation', 'confirmation', 'entity_type_id'));
-                return $this->_result(200, $filteredCustomerData);
+                return $this->_result(200, $filteredCustomerData, null, false);
             } catch (Exception $err) {
                 return $this->_result(500, $err->getMessage());
             }

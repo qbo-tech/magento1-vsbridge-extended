@@ -1,80 +1,158 @@
 <?php
+/**
+ * @author José Castañeda <jose@qbo.tech>
+ * @category Divante
+ * @package Divante/VueStorefrontBridge
+ * @copyright QBO Digital (http://www.qbo.tech)
+ * 
+ * © 2018 QBO DIGITAL SOLUTIONS. 
+ *
+ */
 require_once('AbstractController.php');
 require_once(__DIR__.'/../helpers/JWT.php');
-
 /**
- * Class Divante_VueStorefrontBridge_StockController
- *
- * @package     Divante
- * @category    VueStorefrontBridge
- * @copyright   Copyright (C) 2018 Divante Sp. z o.o.
+ * Order Place Controller for VSF
  */
 class Divante_VueStorefrontBridge_OrderController extends Divante_VueStorefrontBridge_AbstractController
 {
+    const EXCEPTION_LOG_FILE = "vsf_exception.log";
+    const DEBUG_LOG_FILE = "vsf_debug.log";
+    const EMAIL_CUSTOMER_TEMPLATE = "vsbridge/general/customer_email_template";
+    const EMAIL_ADMIN_TEMPLATE = "vsbridge/general/error_admin_email_template";
+    const EMAIL_ADMIN_RECIPIENT = "vsbridge/general/error_admin_email_recipient";
+    const CONST_ADMIN_NAME = "Admin";
 
     /**
-     * @var Divante_VueStorefrontBridge_Model_Api_Request
+     * Create Order from Shopping Cart 
+     * @throws Mage_Core_Exception
      */
-    private $requestModel;
-
-    /**
-     * Divante_VueStorefrontBridge_WishlistController constructor.
-     *
-     * @param Zend_Controller_Request_Abstract  $request
-     * @param Zend_Controller_Response_Abstract $response
-     * @param array                             $invokeArgs
-     */
-    public function __construct(
-        Zend_Controller_Request_Abstract $request,
-        Zend_Controller_Response_Abstract $response,
-        array $invokeArgs = []
-    ) {
-        parent::__construct($request, $response, $invokeArgs);
-        $this->requestModel = Mage::getSingleton('vsbridge/api_request');
-    }
-
-    /**
-     * Place order for user
-     */
-    public function placeOrderAction()
+    public function createAction()
     {
-        if (!$this->_checkHttpMethod('POST')) {
-            return $this->_result(500, 'Only POST method allowed');
-        }
-
-        $request = $this->_getJsonBody();
-
-        if (!$request) {
-            return $this->_result(
-                500,
-                'No JSON object found in the request body'
-            );
-        }
-
-        if (!empty($request->user_id)) {
-            return $this->_result(500, 'Only placing order for guest is supported.');
-        }
-
-        $this->getRequest()->setParam(
-            'cartId',
-            $request->cart_id
-        );
-
-        $quoteObj = $this->requestModel->currentQuote($this->getRequest());
-
-        if (!$quoteObj->getIsActive()) {
-            return $this->_result(500, sprintf('No such entity with id %s', $request->cart_id));
-        }
-
         try {
+            if ($this->getRequest()->getMethod() !== 'POST') {
+                return $this->_result(500, 'Only POST method allowed');
+            } else {
+                $cartId = $this->getRequest()->getParam('cartId');
+                $customer = $this->_currentCustomer($this->getRequest());
+                $quoteObj = $this->_currentQuote($this->getRequest());		
+				
+		        if(!$quoteObj) {
+                    return $this->_result(500, sprintf('No quote found for Cart ID %s ', $cartId));
+                } else {
+		            if(!$this->_checkQuotePerms($quoteObj, $customer)) {
+                        return $this->_result(500, sprintf('User is not authroized to access Cart ID %s ', $cartId));
+                    } else {
+                        if(!$quoteObj->getReservedOrderId()) {
+                            $quoteObj->reserveOrderId()->save();
+                        }
 
-            /** @var Divante_VueStorefrontBridge_Model_Api_Order_Create $apiOrderService */
-            $apiOrderService = Mage::getModel('vsbridge/api_order_create', $quoteObj);
-            $order = $apiOrderService->create($request);
+                        $orderId = $quoteObj->getReservedOrderId();
+                        Mage::log(sprintf("[VSF] Processing Quote %s", $orderId), null, self::DEBUG_LOG_FILE);
 
-            return $this->_result(200, $order->getId());
-        } catch (\Exception $e) {
-            return $this->_result(500, $e->getMessage());
+                        $request = $this->_getJsonBody();
+
+                        $paymentMethod = $request->paymentMethod->method;
+
+                        $paymentAdditionalData = null;
+                        if(property_exists($request->paymentMethod, "additional_data") && count((array)$request->paymentMethod->additional_data) > 0) {
+                           $paymentAdditionalData = json_decode(json_encode($request->paymentMethod->additional_data));
+                        }
+		                $quoteObj->getPayment()->importData(
+                            array(
+                                'method' => $paymentMethod,
+                                'additional_data' => $paymentAdditionalData
+                            )
+                        );
+                        if(!$customer) {
+                            $quoteObj->setCustomerIsGuest(true);
+                        }
+                        Mage::dispatchEvent('vsf_submit_order_before',
+                            array(
+                                'quote' => $quoteObj
+                            )
+                        );
+                        //$quoteObj->collectTotals()->save();
+			            $service = Mage::getModel('sales/service_quote', $quoteObj);
+                        $service->submitAll();
+                        $order = $service->getOrder();
+                        $order->sendNewOrderEmail();
+
+                        Mage::dispatchEvent('checkout_submit_all_after', 
+                            array(
+                                'order' => $order, 
+                                'quote' => $quoteObj
+                            )
+                        );
+
+                        return $this->_result(200,
+                            array(
+                                "success" => true,
+                                "orderId" => $order->getRealOrderId(),
+                                "totals" => $order->getGrandTotal()
+                            )
+		        );
+                    }
+	        }
+            }
+        } catch (Exception $err) {
+            Mage::logException($err);
+            $this->_reportError($quoteObj, $orderId, $err);
+            return $this->_result(500, $err->getMessage());
         }
+    }
+    /**
+    * Report Order Error
+    *
+    * @param Mage_Sales_Model_Order_Quote
+    * @param string
+    * @param Exception
+    */
+    protected function _reportError($quoteObj, $orderId, $err)
+    {
+        Mage::log(
+            sprintf("[VSF] Error placing order: %s, %s", $orderId, $err->getMessage()), 
+            null, 
+            self::EXCEPTION_LOG_FILE
+        );
+       
+        $templateId =  Mage::getStoreConfig(self::EMAIL_CUSTOMER_TEMPLATE);
+        $senderName =  Mage::getStoreConfig('trans_email/ident_support/name');
+        $senderEmail = Mage::getStoreConfig('trans_email/ident_support/email');
+
+        $sender = array(
+            'name' => $senderName,
+            'email' => $senderEmail
+        );
+        // Get Store ID     
+        $storeId = Mage::app()->getStore()->getId(); 
+
+        // Set recepient information
+        $recepientEmail = $quoteObj->getCustomerEmail();
+        $recepientName = $quoteObj->getCustomerName() ? : ""; 
+    
+        Mage::getModel('core/email_template')->sendTransactional(
+            $templateId, 
+            $sender,
+            $recepientEmail,
+            $recepientName, 
+            array(),
+            $storeId
+        );
+        // Report error to Store Admin
+        $vars = array('reason' => $err->getMessage());
+
+        $_adminTemplateId = Mage::getStoreConfig(self::EMAIL_ADMIN_TEMPLATE);
+        $senderEmail = Mage::getStoreConfig('trans_email/ident_support/email');
+        $recipientEmail = Mage::getStoreConfig(self::EMAIL_ADMIN_RECIPIENT);
+
+        Mage::getModel('core/email_template')->sendTransactional(
+            $_adminTemplateId,
+            $sender,
+            $recepientEmail,
+            self::CONST_ADMIN_NAME,
+            $vars,
+            $storeId
+        );
     }
 }
+?>
